@@ -1,0 +1,7 @@
+interface:
+  display_name: "PDF Inspector"
+  short_description: "Classify PDFs and extract reliable local text"
+  default_prompt: "Use $pdf-inspector to classify this PDF, identify pages that need OCR, and extract reliable native text."
+
+policy:
+  allow_implicit_invocation: false
