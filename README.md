@@ -8,7 +8,9 @@ The skill can:
 - find pages that need OCR;
 - detect tables and columns;
 - extract compact Markdown from native PDF text;
-- extract positioned text items as JSON; and
+- extract positioned text items as JSON;
+- verify Markdown page-marker integrity and list missing pages;
+- combine OCR and layout risks into a visual-review page list; and
 - refuse unsafe output replacement by default.
 
 The skill does not perform OCR. It does not send PDF data to a network service.

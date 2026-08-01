@@ -20,6 +20,7 @@ The wrapper returns one compact JSON object that combines classification and lay
 - `pdf_type`, `confidence`, and `page_count`
 - `pages_needing_ocr` and `ocr_reasons_by_page`
 - `pages_with_tables`, `pages_with_columns`, and `is_complex`
+- `pages_recommended_for_visual_review` and `warnings`
 - `has_encoding_issues` when the installed CLI exposes it
 
 Treat page numbers emitted by the CLI as authoritative. Do not infer missing pages or claim that scanned content was read.
@@ -36,6 +37,8 @@ sh <skill-dir>/scripts/inspect-pdf.sh /absolute/path/document.pdf \
 Use `--select-pages 1,3,5-10` for a bounded page set. The wrapper enables compact output and page markers by default. It refuses to overwrite an existing output unless `--force` is present.
 
 After extraction, inspect the saved Markdown. Do not treat malformed, empty, or OCR-required pages as reliable text. Preserve the source PDF.
+
+Check `markdown_integrity` in the wrapper result. If `complete` is false, report the named `missing_pages` or `unexpected_pages`. Do not trust page boundaries for those pages. Route missing pages and table pages to visual review. Native text extraction can omit cells that are stored as images or drawing instructions.
 
 ## Extract positioned items
 
@@ -55,6 +58,7 @@ Positioned items can be large. Save them to a file and query the needed fields w
 - For scanned or image-based pages, report that OCR is required and use an OCR-capable or visual PDF workflow only when the user requested the content.
 - For mixed PDFs, use native extraction for reliable pages and route only the named pages to OCR.
 - For visual layout, forms, rendering, or final appearance verification, use the installed `pdf:pdf` skill.
+- For pages in `pages_recommended_for_visual_review`, compare the native extraction with a rendered page before using tables, columns, plots, or exact page citations.
 - For password-protected files, do not place a password in logs or chat. The wrapper does not accept passwords; use a separately approved secure workflow.
 
 ## Dependency

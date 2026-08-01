@@ -105,6 +105,9 @@ trap cleanup 0 HUP INT TERM
 
 classification_file=$tmp_dir/classification.json
 analysis_file=$tmp_dir/analysis.json
+markdown_integrity_file=$tmp_dir/markdown-integrity.json
+
+printf '%s\n' 'null' > "$markdown_integrity_file"
 
 "$detect_pdf" "$pdf_path" --json > "$classification_file"
 "$detect_pdf" "$pdf_path" --analyze --json > "$analysis_file"
@@ -127,6 +130,60 @@ if [ -n "$markdown_out" ]; then
     fail 'native Markdown extraction failed.'
   fi
   [ -s "$markdown_out" ] || fail 'native Markdown extraction produced no output.'
+
+  page_count=$(jq -r '.page_count' "$classification_file")
+  expected_pages_file=$tmp_dir/expected-pages.txt
+  observed_pages_file=$tmp_dir/observed-pages.txt
+  missing_pages_file=$tmp_dir/missing-pages.txt
+  unexpected_pages_file=$tmp_dir/unexpected-pages.txt
+
+  if [ -z "$page_spec" ]; then
+    awk -v page_count="$page_count" 'BEGIN { for (page = 1; page <= page_count; page++) print page }' \
+      | LC_ALL=C sort -u > "$expected_pages_file"
+  else
+    awk -v page_spec="$page_spec" -v page_count="$page_count" '
+      BEGIN {
+        part_count = split(page_spec, parts, ",")
+        for (part_index = 1; part_index <= part_count; part_index++) {
+          part = parts[part_index]
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", part)
+          if (part ~ /^[0-9]+$/) {
+            page = part + 0
+            if (page >= 1 && page <= page_count) print page
+          } else if (part ~ /^[0-9]+-[0-9]+$/) {
+            split(part, bounds, "-")
+            first_page = bounds[1] + 0
+            last_page = bounds[2] + 0
+            for (page = first_page; page <= last_page; page++) {
+              if (page >= 1 && page <= page_count) print page
+            }
+          }
+        }
+      }
+    ' | LC_ALL=C sort -u > "$expected_pages_file"
+  fi
+
+  sed -n 's/^<!-- Page \([0-9][0-9]*\) -->$/\1/p' "$markdown_out" | LC_ALL=C sort -u > "$observed_pages_file"
+  comm -23 "$expected_pages_file" "$observed_pages_file" > "$missing_pages_file"
+  comm -13 "$expected_pages_file" "$observed_pages_file" > "$unexpected_pages_file"
+
+  expected_marker_count=$(wc -l < "$expected_pages_file" | tr -d ' ')
+  found_marker_count=$(wc -l < "$observed_pages_file" | tr -d ' ')
+  missing_pages=$(jq -Rn '[inputs | select(length > 0) | tonumber] | sort' < "$missing_pages_file")
+  unexpected_pages=$(jq -Rn '[inputs | select(length > 0) | tonumber] | sort' < "$unexpected_pages_file")
+
+  jq -n \
+    --argjson expected "$expected_marker_count" \
+    --argjson found "$found_marker_count" \
+    --argjson missing "$missing_pages" \
+    --argjson unexpected "$unexpected_pages" \
+    '{
+      expected_page_markers: $expected,
+      found_page_markers: $found,
+      missing_pages: $missing,
+      unexpected_pages: $unexpected,
+      complete: (($missing | length) == 0 and ($unexpected | length) == 0)
+    }' > "$markdown_integrity_file"
 fi
 
 if [ -n "$items_out" ]; then
@@ -147,9 +204,37 @@ jq -cs \
   --arg source "$pdf_path" \
   --arg markdown "$markdown_out" \
   --arg items "$items_out" \
-  '.[0] * .[1] + {
-    source: $source,
-    markdown_output: (if $markdown == "" then null else $markdown end),
-    items_output: (if $items == "" then null else $items end)
-  }' \
+  --slurpfile markdown_integrity "$markdown_integrity_file" \
+  '(.[0] * .[1] + {
+      source: $source,
+      markdown_output: (if $markdown == "" then null else $markdown end),
+      items_output: (if $items == "" then null else $items end),
+      markdown_integrity: $markdown_integrity[0]
+    }) as $result
+  | $result + {
+      pages_recommended_for_visual_review: ([
+        ($result.pages_needing_ocr // [])[],
+        ($result.pages_with_tables // [])[],
+        ($result.pages_with_columns // [])[],
+        ($result.markdown_integrity.missing_pages // [])[]
+      ] | unique | sort),
+      warnings: ([
+        if (($result.pages_needing_ocr // []) | length) > 0
+          then "OCR is required for pages_needing_ocr."
+          else empty
+        end,
+        if (($result.pages_with_tables // []) | length) > 0
+          then "Native table extraction can omit cells; visually verify pages_with_tables."
+          else empty
+        end,
+        if (($result.pages_with_columns // []) | length) > 0
+          then "Column reading order can be unreliable; verify pages_with_columns."
+          else empty
+        end,
+        if (($result.markdown_integrity.missing_pages // []) | length) > 0
+          then "Markdown page markers are incomplete; review markdown_integrity.missing_pages."
+          else empty
+        end
+      ])
+    }' \
   "$classification_file" "$analysis_file"
